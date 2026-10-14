@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SmartSpace – BLE Occupancy Monitor</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#f3f5fb;--cd:#fff;--tx:#0f172a;--mu:#64748b;--bd:#e2e8f0;--ac:#4f46e5}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0b1020;--cd:#151b30;--tx:#e5e9f5;--mu:#94a3b8;--bd:#27304d;--ac:#818cf8}}
+:root[data-theme=dark]{--bg:#0b1020;--cd:#151b30;--tx:#e5e9f5;--mu:#94a3b8;--bd:#27304d;--ac:#818cf8}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--tx);font:14px system-ui,-apple-system,"Segoe UI",sans-serif}
+header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;padding:12px 16px;background:var(--cd);border-bottom:1px solid var(--bd)}
+h1{font-size:18px;margin:0}h1 small{color:var(--mu);font-weight:400;font-size:12px;margin-left:6px}
+.wrap{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:14px;padding:14px;max-width:1400px;margin:auto}
+@media(max-width:900px){.wrap{grid-template-columns:1fr}}
+.card{background:var(--cd);border:1px solid var(--bd);border-radius:12px;padding:12px;margin-bottom:12px}
+.card h3{margin:0 0 8px;font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--mu)}
+nav{display:flex;gap:6px;overflow-x:auto;margin-bottom:12px}
+.tab{border:1px solid var(--bd);background:var(--cd);color:var(--tx);padding:8px 12px;border-radius:999px;cursor:pointer;white-space:nowrap}
+.tab.on{background:var(--ac);color:#fff;border-color:var(--ac)}
+section{display:none}section.on{display:block}
+button,select,input[type=number]{background:var(--cd);color:var(--tx);border:1px solid var(--bd);border-radius:8px;padding:6px 10px;font:inherit}
+button{cursor:pointer}button.p{background:var(--ac);color:#fff;border-color:var(--ac)}
+label{display:block;margin:8px 0 2px;color:var(--mu);font-size:12px}label b{color:var(--tx);float:right}
+input[type=range]{width:100%;accent-color:var(--ac)}
+.row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+svg#map{width:100%;height:auto;display:block}.room{cursor:pointer}.nm{font:600 12px system-ui;fill:var(--tx)}.big{font:700 15px system-ui;fill:var(--tx)}.sub{font:11px system-ui;fill:var(--tx)}.ble{fill:var(--ac)}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:6px 4px;text-align:right;border-bottom:1px solid var(--bd)}th:first-child,td:first-child{text-align:left}th{color:var(--mu);font-weight:600}
+.ch{position:relative;height:240px}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:700px){.grid2{grid-template-columns:1fr}}
+.f{display:flex;justify-content:space-between;gap:10px;align-items:center}.pill{padding:2px 8px;border-radius:999px;color:#fff;font-size:12px;font-weight:600}
+.kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px}.kpi div{background:var(--bg);border-radius:10px;padding:10px}.kpi b{display:block;font-size:20px}
+.mu{color:var(--mu);font-size:12px}.al{border-left:3px solid #dc2626;padding:4px 8px;margin:4px 0;background:var(--bg);border-radius:4px;font-size:12px}
+code{background:var(--bg);padding:2px 5px;border-radius:4px;font-size:12px}pre{background:var(--bg);padding:10px;border-radius:8px;overflow:auto;font-size:12px}
+.ok{color:#16a34a}.warn{color:#dc2626}
+</style></head><body>
+<header><h1>📡 SmartSpace<small>BLE occupancy estimation · simulated · no cameras</small></h1>
+<div class="row"><span class="pill" style="background:var(--ac)" id="clk">08:00</span>
+<span class="mu">Focus room</span><select id="roomSel"></select>
+<button class="p" id="run">⏸ Pause</button></div></header>
+<div class="wrap"><main>
+<nav><button class="tab on" data-tab="map">Campus map</button><button class="tab" data-tab="stu">Student finder</button><button class="tab" data-tab="sig">Signals</button><button class="tab" data-tab="trend">Trends &amp; peaks</button><button class="tab" data-tab="eval">Evaluation</button><button class="tab" data-tab="priv">Privacy</button></nav>
+
+<section id="map" class="on"><div class="card"><h3>Live heatmap (click a room)</h3><svg id="map-svg" viewBox="-8 -8 544 280"></svg>
+<div class="row mu"><span>Colour = estimated occupancy:</span><span style="color:#16a34a">● quiet</span><span style="color:#ca8a04">● moderate</span><span style="color:#dc2626">● crowded</span><span>• blue dot = BLE scanner • wall thickness = attenuation</span></div></div>
+<div class="card"><h3>Estimated vs ground truth</h3><table id="tbl"></table></div></section>
+
+<section id="stu"><div class="card"><h3>Find a less crowded place</h3><div class="row"><span>I need at least</span><input type="number" id="minSeats" value="5" min="0" max="60" style="width:70px"><span>free spots</span></div><p id="best" style="font-weight:600"></p><div id="finder"></div>
+<p class="mu">Occupancy is an <b>estimate with a confidence range</b>, not an exact headcount.</p></div></section>
+
+<section id="sig"><div class="grid2"><div class="card"><h3>RSSI of devices seen (current window)</h3><div class="ch"><canvas id="cH"></canvas></div><p class="mu">Bars right of the threshold are counted as "inside the room".</p></div>
+<div class="card"><h3>Signal variability over time</h3><div class="ch"><canvas id="cV"></canvas></div><p class="mu">Mean RSSI (dBm) and std-dev (dB) of in-room devices.</p></div></div>
+<div class="card"><h3>Raw BLE advertisement stream (this tick, strongest 8)</h3><table id="stream"></table></div></section>
+
+<section id="trend"><div class="card"><h3>Occupancy history – <span id="tn"></span></h3><div class="ch"><canvas id="cT"></canvas></div></div>
+<div class="card"><h3>Peak-hour analytics &amp; prediction</h3><div class="ch"><canvas id="cP"></canvas></div><p id="peaks"></p></div></section>
+
+<section id="eval"><div class="card"><h3>Estimator accuracy (last 200 ticks, all rooms)</h3><div class="kpi" id="kpi"></div><table id="etbl" style="margin-top:10px"></table></div>
+<div class="grid2"><div class="card"><h3>Estimate vs truth (last 100 ticks)</h3><div class="ch"><canvas id="cS"></canvas></div></div>
+<div class="card"><h3>Sensitivity experiment</h3><div class="row"><select id="swv"><option value="loss">Packet loss</option><option value="wall">Wall attenuation (dB)</option><option value="dup">Duplicate detections</option><option value="multi">Devices per person</option><option value="thr">RSSI threshold (dBm)</option></select><button class="p" id="swb">Run sweep</button></div>
+<div class="ch"><canvas id="cW"></canvas></div><p class="mu" id="swt">Runs headless simulations at 50% load and plots error as one factor changes.</p></div></div></section>
+
+<section id="priv"><div class="card"><h3>Privacy by design</h3>
+<p>Mode: <b id="pm"></b></p><ul><li><b>No cameras, no faces, no video.</b> Only BLE advertisement packets (ID + RSSI) are observed.</li><li>Identifiers are salted-hashed and the salt rotates hourly, so IDs cannot be linked across hours.</li><li>Raw observations are discarded after each short window; only <b>aggregated room-level counts</b> are stored.</li><li>Even so, wireless IDs can enable tracking if stored carelessly – a real deployment needs consent and policy.</li></ul>
+<h3>Same device, two views</h3><pre id="idv"></pre><h3>What the database stores (latest row)</h3><pre id="dbrow"></pre></div></section>
+</main>
+<aside>
+<div class="card"><h3>Simulator</h3>
+<label>Speed<select id="spd" style="float:right"><option value="1">1×</option><option value="3">3×</option><option value="8">8×</option></select></label><div style="height:6px"></div>
+<label><input type="checkbox" id="auto" checked> Auto traffic (follows daily timetable)</label>
+<label>Crowd level <b id="v-surge"></b></label><input type="range" data-p="surge" min=".2" max="1.5" step=".05">
+<div class="row" style="margin-top:6px"><button data-clk="750">Lunch rush</button><button data-clk="1020">Evening study</button><button data-clk="120">Night</button></div>
+<h3 style="margin-top:12px">Wireless channel</h3>
+<label>Packet loss <b id="v-loss"></b></label><input type="range" data-p="loss" min="0" max=".8" step=".05">
+<label>Wall attenuation (dB) <b id="v-wall"></b></label><input type="range" data-p="wall" min="0" max="20" step="1">
+<label>Extra devices per person <b id="v-multi"></b></label><input type="range" data-p="multi" min="0" max="1" step=".05">
+<label>Duplicate detections (MAC rotation) <b id="v-dup"></b></label><input type="range" data-p="dup" min="0" max=".6" step=".05">
+<h3 style="margin-top:12px">Estimator</h3>
+<label>In-room RSSI threshold (dBm) <b id="v-thr"></b></label><input type="range" data-p="thr" min="-95" max="-60" step="1">
+<label>Window (ticks) <b id="v-W"></b></label><input type="range" data-p="W" min="2" max="12" step="1">
+<label><input type="checkbox" data-p="priv"> Privacy mode (hashed IDs)</label>
+<label><input type="checkbox" id="dots"> Show ground-truth people</label></div>
+<div class="card"><h3>Selected room: <span id="sn"></span></h3>
+<div class="row"><button data-d="-10">−10</button><button data-d="-3">−3</button><button data-d="3">+3</button><button data-d="10">+10</button></div>
+<p class="mu">Ground truth: <b id="gt"></b>. Turn off Auto traffic to hold manual counts.</p>
+<label>Capacity <input type="number" id="cap" min="5" max="300" style="width:80px;float:right"></label><div style="height:18px"></div></div>
+<div class="card"><h3>Crowd alerts</h3><label><input type="checkbox" data-p="alerts"> Enabled</label>
+<label>Alert at <b id="v-athr"></b> of capacity</label><input type="range" data-p="athr" min=".5" max="1.1" step=".05"><div id="alog" style="margin-top:8px"></div></div>
+</aside></div>
+<script>
+const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
+const rnd=Math.random,gauss=()=>Math.sqrt(-2*Math.log(rnd()||1e-9))*Math.cos(6.2832*rnd());
+const mac=()=>Math.floor(rnd()*16777215).toString(16).padStart(6,'0');
+const hs=s=>{let h=2166136261;for(const c of s){h^=c.charCodeAt(0);h=Math.imul(h,16777619)}return h>>>0};
+const tm=m=>String(m/60|0).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
+const S=12;
+const RD=[['lib','Central Library',0,0,240,144,60,[[.8,11,2],[.9,16,2.2]]],['read','Reading Room',240,0,120,144,30,[[.8,10,2],[.7,15,2.5]]],['sem','Seminar Hall',360,0,168,144,50,[[.8,10,1.2],[.8,14,1.2]]],
+['lab','Computer Lab',0,144,168,120,40,[[.7,10.5,2.5],[.7,15,2.2]]],['study','Study Room',168,144,96,120,20,[[.5,13,3],[.85,20,2]]],['cant','Canteen',264,144,240,120,80,[[.45,9,.8],[1,13,1],[.55,17.5,1.2]]]];
+const ADJ={lib:['read','lab'],read:['lib','sem','study','cant'],sem:['read','cant'],lab:['lib','study'],study:['lab','read','cant'],cant:['study','read','sem']};
+const DEF={loss:.1,wall:12,multi:.25,dup:0,thr:-80,W:6,surge:1,priv:true,alerts:true,athr:.9,carry:.92};
+const P={...DEF};
+const prof=(pf,h)=>Math.min(1.1,.03+pf.reduce((s,[a,m,d])=>s+a*Math.exp(-.5*((h-m)/d)**2),0));
+
+class World{
+ constructor(P,auto=true){this.P=P;this.auto=auto;this.clock=0;this.warm=false;this.R={};
+  RD.forEach(([id,name,x,y,w,h,cap,pf])=>this.R[id]={id,name,px:[x,y,w,h],w:w/S,h:h/S,cap,pf,ppl:[],truth:0,win:[],anch:[],hist:[],rs:[],est:null,lo:0,hi:0,conf:'High',rsAll:[],mu:0,sdv:0,alert:false,hrs:Array.from({length:24},()=>[0,0])})}
+ np(r){const P=this.P;return{x:rnd()*r.w,y:rnd()*r.h,d:Array.from({length:rnd()<P.carry?1+(rnd()<P.multi?1:0):0},mac)}}
+ setTruth(r,n){r.truth=n;while(r.ppl.length<n)r.ppl.push(this.np(r));while(r.ppl.length>n)r.ppl.splice(rnd()*r.ppl.length|0,1)}
+ tick(){const P=this.P,R=Object.values(this.R);this.clock=(this.clock+5)%1440;const hr=this.clock/60|0;
+  if(this.auto)for(const r of R){const tg=r.cap*prof(r.pf,this.clock/60)*P.surge;this.setTruth(r,Math.max(0,Math.min(Math.round(r.cap*1.2),r.truth+Math.round((tg-r.truth)*.25+gauss()*1.5))))}
+  for(const r of R){const ob=[],sx=r.w/2,sy=r.h/2;
+   for(const p of r.ppl)for(const m of p.d){if(rnd()<P.loss)continue;const rs=-59-20*Math.log10(Math.hypot(p.x-sx,p.y-sy,2.3))+gauss()*4;if(rs>-92)ob.push([rnd()<P.dup?mac():m,rs,1])}
+   for(const q of ADJ[r.id])for(const p of this.R[q].ppl)for(const m of p.d){if(rnd()<P.loss)continue;const rs=-59-20*Math.log10(3+rnd()*9)-P.wall+gauss()*4;if(rs>-92)ob.push([rnd()<P.dup?mac():m,rs,0])}
+   r.anch.push(rnd()>=P.loss?1:0);if(r.anch.length>30)r.anch.shift();
+   r.win.push(ob);while(r.win.length>P.W)r.win.shift();this.estimate(r,hr);
+   const pc=r.est/r.cap;if(!this.warm&&P.alerts&&pc>=P.athr&&!r.alert){r.alert=true;this.onAlert&&this.onAlert(r)}if(pc<P.athr-.08)r.alert=false}}
+ estimate(r,hr){const P=this.P,m=new Map();
+  for(const ob of r.win)for(const[id,rs]of ob){const e=m.get(id)||[0,0];e[0]++;e[1]+=rs;m.set(id,e)}
+  const all=[],ins=[];for(const e of m.values()){const a=e[1]/e[0];all.push(a);if(a>=P.thr)ins.push(a)}
+  const pdr=Math.max(.05,r.anch.reduce((a,b)=>a+b,0)/Math.max(1,r.anch.length)),cov=1-Math.pow(1-pdr,P.W);
+  const raw=ins.length/(1.15*.93*cov);r.est=r.est==null?raw:r.est*.5+raw*.5;
+  const sd=Math.sqrt(raw+1)+raw*.1+raw*(1-pdr)*.4;r.lo=Math.max(0,r.est-1.28*sd);r.hi=r.est+1.28*sd;
+  const w=(r.hi-r.lo)/(r.est+8);r.conf=w<.45?'High':w<.8?'Medium':'Low';
+  r.rsAll=all;r.mu=ins.length?ins.reduce((a,b)=>a+b,0)/ins.length:-90;r.sdv=ins.length?Math.sqrt(ins.reduce((a,b)=>a+(b-r.mu)**2,0)/ins.length):0;
+  r.rs.push([r.mu,r.sdv]);if(r.rs.length>120)r.rs.shift();
+  r.hist.push([this.clock,r.truth,r.est,r.lo,r.hi]);if(r.hist.length>600)r.hist.shift();
+  r.hrs[hr][0]+=r.est/r.cap;r.hrs[hr][1]++}
+}
+const met=(r,n=200)=>{const h=r.hist.slice(-n);let ae=0,pe=0,b=0,c=0,pc=0;for(const[,t,e,lo,hi]of h){ae+=Math.abs(e-t);b+=e-t;if(t>0){pe+=Math.abs(e-t)/t;pc++}if(t>=lo&&t<=hi)c++}const k=h.length||1;return{mae:ae/k,mape:pc?pe/pc*100:0,bias:b/k,cov:c/k*100}};
+const avgH=(r,h)=>r.hrs[h][1]?r.hrs[h][0]/r.hrs[h][1]:0;
+function trial(o){const w=new World({...P,...o},false);w.warm=true;for(const r of Object.values(w.R))w.setTruth(r,Math.round(r.cap*.5));let a=0,b=0,c=0;
+ for(let i=0;i<40;i++){w.tick();if(i>=10)for(const r of Object.values(w.R)){const d=(r.est-r.truth)/r.truth;a+=Math.abs(d);b+=d;c++}}return[a/c*100,b/c*100]}
+
+/* ---- live world with a warm-up "yesterday" so analytics are populated ---- */
+const W=new World(P);W.warm=true;for(let i=0;i<288;i++)W.tick();W.warm=false;W.clock=480;
+const alerts=[];W.onAlert=r=>{alerts.unshift(`${tm(W.clock)} · ${r.name} at ${Math.round(r.est/r.cap*100)}% (≈${Math.round(r.est)}/${r.cap})`);if(alerts.length>8)alerts.pop()};
+let sel='lib',running=true,timer;
+
+/* ---- UI build ---- */
+$('#roomSel').innerHTML=RD.map(r=>`<option value="${r[0]}">${r[1]}</option>`).join('');
+const svg=$('#map-svg');
+svg.innerHTML=Object.values(W.R).map(r=>{const[x,y,w,h]=r.px;return`<g class="room" data-id="${r.id}"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="3"/><g class="dots"></g><text class="nm" x="${x+8}" y="${y+18}">${r.name}</text><text class="big" x="${x+8}" y="${y+38}"></text><text class="sub" x="${x+8}" y="${y+h-9}"></text><circle class="ble" cx="${x+w-12}" cy="${y+12}" r="5"/></g>`}).join('');
+svg.onclick=e=>{const g=e.target.closest('[data-id]');if(g){sel=g.dataset.id;$('#roomSel').value=sel;render()}};
+$('#roomSel').onchange=e=>{sel=e.target.value;render()};
+$$('.tab').forEach(b=>b.onclick=()=>{$$('.tab').forEach(x=>x.classList.toggle('on',x==b));$$('main section').forEach(s=>s.classList.toggle('on',s.id==b.dataset.tab));render()});
+function syncCtl(){$$('[data-p]').forEach(i=>{const k=i.dataset.p;if(i.type=='checkbox')i.checked=P[k];else i.value=P[k];const v=$('#v-'+k);if(v)v.textContent=k=='athr'||k=='loss'||k=='dup'||k=='multi'?Math.round(P[k]*100)+'%':k=='surge'?P[k].toFixed(2)+'×':k=='thr'?P[k]+' dBm':k=='wall'?P[k]+' dB':P[k]})}
+$$('[data-p]').forEach(i=>i.oninput=()=>{P[i.dataset.p]=i.type=='checkbox'?i.checked:+i.value;syncCtl();render()});
+$('#auto').onchange=e=>W.auto=e.target.checked;$('#dots').onchange=render;
+$$('[data-clk]').forEach(b=>b.onclick=()=>{W.clock=+b.dataset.clk;render()});
+$$('[data-d]').forEach(b=>b.onclick=()=>{const r=W.R[sel];W.setTruth(r,Math.max(0,r.truth+ +b.dataset.d));render()});
+$('#cap').onchange=e=>{W.R[sel].cap=Math.max(5,+e.target.value||5);render()};
+$('#run').onclick=()=>{running=!running;$('#run').textContent=running?'⏸ Pause':'▶ Run'};
+function start(){clearInterval(timer);timer=setInterval(()=>{if(running){W.tick();render()}},900/+$('#spd').value)}$('#spd').onchange=start;
+
+/* ---- charts ---- */
+Chart.defaults.color=getComputedStyle(document.documentElement).getPropertyValue('--mu').trim()||'#64748b';Chart.defaults.borderColor='rgba(128,128,128,.2)';
+const mk=(id,type,ds,o={})=>new Chart($(id),{type,data:{labels:[],datasets:ds},options:{responsive:true,maintainAspectRatio:false,animation:false,plugins:{legend:{labels:{boxWidth:10}}},...o}});
+const ln=(l,c,x={})=>({label:l,data:[],borderColor:c,backgroundColor:c,pointRadius:0,borderWidth:2,tension:.25,...x});
+const cH=mk('#cH','bar',[{label:'devices',data:[],backgroundColor:[]}],{plugins:{legend:{display:false}},scales:{x:{title:{display:true,text:'mean RSSI (dBm)'}}}});
+const cV=mk('#cV','line',[ln('mean RSSI','#4f46e5',{yAxisID:'y'}),ln('std-dev','#f59e0b',{yAxisID:'y1'})],{scales:{y:{title:{display:true,text:'dBm'}},y1:{position:'right',grid:{drawOnChartArea:false},title:{display:true,text:'dB'}}}});
+const cT=mk('#cT','line',[ln('ground truth','#16a34a'),ln('estimate','#4f46e5'),ln('upper','#94a3b8',{borderDash:[4,3],borderWidth:1}),ln('lower','#94a3b8',{borderDash:[4,3],borderWidth:1}),ln('capacity','#dc2626',{borderWidth:1})],{scales:{x:{ticks:{maxTicksLimit:8}}}});
+const cP=mk('#cP','bar',[{label:'avg occupancy %',data:[],backgroundColor:[]}],{plugins:{legend:{display:false}}});
+const cS=mk('#cS','scatter',[{label:'estimate',data:[],backgroundColor:'rgba(79,70,229,.5)',pointRadius:3},{label:'ideal',data:[{x:0,y:0},{x:100,y:100}],showLine:true,borderColor:'#dc2626',pointRadius:0,borderWidth:1}],{scales:{x:{title:{display:true,text:'true people'}},y:{title:{display:true,text:'estimated'}}}});
+const cW=mk('#cW','line',[ln('MAPE %','#4f46e5'),ln('bias %','#f59e0b')],{scales:{y:{title:{display:true,text:'error %'}}}});
+const SW={loss:[0,.1,.2,.3,.4,.5,.6],wall:[0,3,6,9,12,15,18],dup:[0,.1,.2,.3,.4,.5],multi:[0,.25,.5,.75,1],thr:[-70,-75,-80,-85,-90]};
+$('#swb').onclick=()=>{const k=$('#swv').value,b=$('#swb');b.disabled=true;b.textContent='Running…';setTimeout(()=>{const xs=SW[k],res=xs.map(x=>{let a=0,c=0;for(let i=0;i<3;i++){const t=trial({[k]:x});a+=t[0];c+=t[1]}return[a/3,c/3]});
+ cW.data.labels=xs.map(x=>k=='thr'?x:k=='wall'?x:Math.round(x*100)+'%');cW.data.datasets[0].data=res.map(r=>r[0]);cW.data.datasets[1].data=res.map(r=>r[1]);cW.update();
+ const w=res.reduce((m,r,i)=>r[0]>res[m][0]?i:m,0),bst=res.reduce((m,r,i)=>r[0]<res[m][0]?i:m,0);
+ $('#swt').textContent=`Lowest error at ${cW.data.labels[bst]} (${res[bst][0].toFixed(0)}%), highest at ${cW.data.labels[w]} (${res[w][0].toFixed(0)}%). Positive bias = over-counting, negative = under-counting.`;b.disabled=false;b.textContent='Run sweep'},30)};
+
+/* ---- renderers ---- */
+const lvl=p=>p<.35?['Quiet','#16a34a']:p<.65?['Moderate','#ca8a04']:p<.9?['Busy','#ea580c']:['Full','#dc2626'];
+function drawMap(){const dots=$('#dots').checked;for(const r of Object.values(W.R)){const g=svg.querySelector(`[data-id=${r.id}]`),p=r.est/r.cap,rc=g.querySelector('rect');
+ rc.style.fill=`hsla(${120-Math.min(p,1)*120},70%,50%,.5)`;rc.style.stroke=r.id==sel?'var(--ac)':'var(--mu)';rc.style.strokeWidth=r.id==sel?3:1+P.wall/5;
+ g.querySelector('.big').textContent=`${Math.round(r.est)} ±${Math.round((r.hi-r.lo)/2)} / ${r.cap}`;g.querySelector('.sub').textContent=`${Math.round(p*100)}% · ${r.conf} confidence${r.alert?' ⚠':''}`;
+ g.querySelector('.dots').innerHTML=dots?r.ppl.map(q=>`<circle cx="${r.px[0]+q.x*S}" cy="${r.px[1]+q.y*S}" r="2" fill="var(--tx)" opacity=".6"/>`).join(''):''}}
+function drawTable(){$('#tbl').innerHTML='<tr><th>Room</th><th>Truth</th><th>Estimate</th><th>Range</th><th>Occ.</th><th>Status</th></tr>'+Object.values(W.R).map(r=>{const p=r.est/r.cap,l=lvl(p);return`<tr><td>${r.name}</td><td>${r.truth}</td><td>${r.est.toFixed(1)}</td><td>${Math.round(r.lo)}–${Math.round(r.hi)}</td><td>${Math.round(p*100)}%</td><td><span class="pill" style="background:${l[1]}">${l[0]}</span></td></tr>`}).join('')}
+function drawFinder(){const mn=+$('#minSeats').value||0,h=W.clock/60|0,L=Object.values(W.R).map(r=>({r,p:r.est/r.cap})).sort((a,b)=>a.p-b.p);
+ const ok=L.filter(x=>x.r.cap-x.r.est>=mn)[0];$('#best').textContent=ok?`✅ Best option right now: ${ok.r.name} (about ${Math.round(ok.r.cap-ok.r.est)} spots free)`:'No room currently meets that requirement.';
+ $('#finder').innerHTML=L.map(({r,p})=>{const l=lvl(p),nx=avgH(r,(h+1)%24),no=avgH(r,h),tr=nx>no+.05?'↑ getting busier next hour':nx<no-.05?'↓ getting quieter next hour':'→ steady next hour';let b=8;for(let i=8;i<=20;i++)if(avgH(r,i)<avgH(r,b))b=i;
+ return`<div class="card" style="opacity:${r.cap-r.est<mn?.45:1}"><div class="f"><b>${r.name}</b><span class="pill" style="background:${l[1]}">${l[0]}</span></div><div class="mu">≈${Math.round(Math.max(0,r.cap-r.hi))}–${Math.round(Math.max(0,r.cap-r.lo))} free of ${r.cap} · ${r.conf} confidence · ${tr} · usually quietest at ${tm(b*60)}</div></div>`}).join('')}
+function drawSig(){const r=W.R[sel],e=[],c=[];for(let x=-95;x<-55;x+=5){e.push(x+'…'+(x+5));c.push(r.rsAll.filter(v=>v>=x&&v<x+5).length)}
+ cH.data.labels=e;cH.data.datasets[0].data=c;cH.data.datasets[0].backgroundColor=e.map((_,i)=>-95+i*5+5>P.thr?'#4f46e5':'#94a3b8');cH.update();
+ cV.data.labels=r.rs.map((_,i)=>i);cV.data.datasets[0].data=r.rs.map(v=>v[0]);cV.data.datasets[1].data=r.rs.map(v=>v[1]);cV.update();
+ const d=id=>P.priv?'#'+hs(id+(W.clock/60|0)).toString(16).slice(-4):id.replace(/(..)(?=.)/g,'$1:'),o=(r.win[r.win.length-1]||[]).slice().sort((a,b)=>b[1]-a[1]).slice(0,8);
+ $('#stream').innerHTML='<tr><th>Device ID</th><th>RSSI</th><th>Simulator tag</th></tr>'+o.map(a=>`<tr><td><code>${d(a[0])}</code></td><td>${a[1].toFixed(1)} dBm</td><td>${a[2]?'inside room':'leak from next room'}</td></tr>`).join('')}
+function drawTrend(){const r=W.R[sel],h=r.hist.slice(-120);$('#tn').textContent=r.name;cT.data.labels=h.map(v=>tm(v[0]));[1,2,4,3].forEach((k,i)=>cT.data.datasets[i].data=h.map(v=>v[k]));cT.data.datasets[4].data=h.map(()=>r.cap);cT.update();
+ const a=r.hrs.map((_,i)=>avgH(r,i)*100),top=[...a.keys()].sort((x,y)=>a[y]-a[x]).slice(0,3);cP.data.labels=a.map((_,i)=>tm(i*60));cP.data.datasets[0].data=a;cP.data.datasets[0].backgroundColor=a.map((_,i)=>top.includes(i)?'#dc2626':'#4f46e5');cP.update();
+ const h0=W.clock/60|0;$('#peaks').innerHTML=`Peak hours: <b>${top.sort((x,y)=>x-y).map(i=>tm(i*60)).join(', ')}</b>. Forecast for ${tm(((h0+1)%24)*60)}: <b>${Math.round(avgH(r,(h0+1)%24)*100)}%</b> of capacity (typical), now ≈ ${Math.round(r.est/r.cap*100)}%.`}
+function drawEval(){const R=Object.values(W.R),M=R.map(r=>met(r)),av=k=>M.reduce((s,m)=>s+m[k],0)/M.length;
+ $('#kpi').innerHTML=`<div><b>${av('mae').toFixed(1)}</b>MAE (people)</div><div><b>${av('mape').toFixed(0)}%</b>MAPE</div><div><b>${av('bias').toFixed(1)}</b>Bias (people)</div><div><b>${av('cov').toFixed(0)}%</b>Truth inside range</div>`;
+ $('#etbl').innerHTML='<tr><th>Room</th><th>MAE</th><th>MAPE</th><th>Bias</th><th>In range</th></tr>'+R.map((r,i)=>`<tr><td>${r.name}</td><td>${M[i].mae.toFixed(1)}</td><td>${M[i].mape.toFixed(0)}%</td><td>${M[i].bias.toFixed(1)}</td><td>${M[i].cov.toFixed(0)}%</td></tr>`).join('');
+ cS.data.datasets[0].data=R.flatMap(r=>r.hist.slice(-100).map(v=>({x:v[1],y:v[2]})));cS.update()}
+function drawSide(){const r=W.R[sel];$('#clk').textContent=tm(W.clock);$('#sn').textContent=r.name;$('#gt').textContent=r.truth;if(document.activeElement!=$('#cap'))$('#cap').value=r.cap;
+ $('#alog').innerHTML=alerts.length?alerts.map(a=>`<div class="al">${a}</div>`).join(''):'<span class="mu">No alerts yet.</span>';
+ $('#pm').innerHTML=P.priv?'<span class="ok">ON – hashed, rotating identifiers</span>':'<span class="warn">OFF – raw device identifiers visible (not recommended)</span>';
+ const id=r.ppl.find(p=>p.d.length);if(id){const m=id.d[0];$('#idv').textContent=`Raw BLE address : ${m.replace(/(..)(?=.)/g,'$1:')}\nStored/shown    : #${hs(m+(W.clock/60|0)).toString(16).slice(-4)}  (salt rotates hourly)`}
+ $('#dbrow').textContent=JSON.stringify({room:r.id,t:tm(W.clock),estimate:+r.est.toFixed(1),range:[Math.round(r.lo),Math.round(r.hi)],confidence:r.conf,device_ids:'none retained'},null,1)}
+function render(){drawMap();drawTable();drawSide();const t=$('.tab.on').dataset.tab;if(t=='stu')drawFinder();if(t=='sig')drawSig();if(t=='trend')drawTrend();if(t=='eval')drawEval()}
+syncCtl();render();start();
+</script></body></html>
